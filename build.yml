@@ -1,0 +1,55 @@
+name: Build APK
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ambil proyek dari file zip terbaru
+        shell: bash
+        run: |
+          ZIP=$(for f in *.zip; do [ -f "$f" ] && echo "$(git log -1 --format=%ct -- "$f") $f"; done | sort -n | tail -1 | cut -d' ' -f2-)
+          if [ -z "$ZIP" ]; then echo "Tidak ada file .zip di repo. Upload zip proyek dulu."; exit 1; fi
+          echo "Memakai: $ZIP"
+          mkdir src && unzip -q "$ZIP" -d src
+          SETTINGS=$(find src -name settings.gradle | head -1)
+          if [ -z "$SETTINGS" ]; then echo "settings.gradle tidak ditemukan di dalam zip."; exit 1; fi
+          echo "PROJECT_DIR=$(dirname "$SETTINGS")" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+
+      - name: Build APK
+        shell: bash
+        run: |
+          cd "$PROJECT_DIR"
+          gradle assembleDebug --no-daemon 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+
+      - name: Ringkasan error (kalau gagal)
+        if: failure()
+        shell: bash
+        run: |
+          {
+            echo '### Error build (salin bagian ini ke Claude)'
+            echo '```'
+            grep -E "^e: |error:|What went wrong|FAILED" -A4 build.log | head -80
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pustaka-debug-apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
